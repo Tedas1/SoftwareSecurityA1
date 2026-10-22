@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Annotated, Literal, Self
 
 import jwt
@@ -7,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 TOKEN_LIFETIME_SECONDS = 900
+Role = Literal["renter", "staff"]
 bearer = HTTPBearer(auto_error=False)
 
 
@@ -21,7 +23,7 @@ class Claims(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     sub: str = Field(min_length=1, max_length=100)
-    role: Literal["renter", "staff"]
+    role: Role
     iat: int = Field(ge=0)
     exp: int = Field(ge=0)
     scope: Literal["user", "agreement"] = "user"
@@ -34,6 +36,37 @@ class Claims(BaseModel):
         if (self.scope == "agreement") != (self.booking_id is not None):
             raise ValueError("Only agreement tokens must bind exactly one booking")
         return self
+
+
+def issue_token(
+    subject: str,
+    role: Role,
+    *,
+    booking_id: int | None = None,
+    expires_at: int | None = None,
+) -> str:
+    """Issue user or single-booking authority, respecting the parent expiry."""
+    now = int(time.time())
+    expiry = now + TOKEN_LIFETIME_SECONDS
+    if expires_at is not None:
+        expiry = min(expiry, expires_at)
+    if expiry <= now:
+        raise HTTPException(
+            status_code=401,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    claims = Claims(
+        sub=subject,
+        role=role,
+        iat=now,
+        exp=expiry,
+        scope="agreement" if booking_id is not None else "user",
+        booking_id=booking_id,
+    )
+    return jwt.encode(
+        claims.model_dump(exclude_none=True), jwt_key(), algorithm="HS256"
+    )
 
 
 def authenticate(

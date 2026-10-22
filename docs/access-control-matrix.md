@@ -1,6 +1,8 @@
 # Access-control matrix
 
-Every fleet domain endpoint verifies an HS256 JWT itself through `Depends`.
+Every protected rental API endpoint and every fleet domain endpoint verifies an
+HS256 JWT itself through `Depends`. The only unauthenticated domain operation
+is `/login`.
 Missing, expired, malformed or incorrectly signed tokens return 401. A valid
 token with insufficient authority returns 403. OpenAPI/docs expose no domain data.
 
@@ -22,8 +24,9 @@ token with insufficient authority returns 403. OpenAPI/docs expose no domain dat
 - Processor JWTs retain the initiating user's subject and role, add
   `scope="agreement"` and one positive `booking_id`, and cannot use user/bulk
   operations even if the initiating role is staff.
-- The rental API will issue scoped tokens in a later step; never pass a general
-  user token to the processor. The shared signing key is an environment secret.
+- The rental API issues scoped tokens for agreement requests and never passes a
+  general user token to the processor. Delegation cannot extend the user's expiry.
+  The shared signing key is an environment secret.
   Independent signing authority is a documented production-readiness gap.
 - Ownership/status cannot be supplied during booking creation: extra fields
   are rejected. The database defaults status to `pending`.
@@ -34,5 +37,22 @@ token with insufficient authority returns 403. OpenAPI/docs expose no domain dat
   Existing invoices remain readable by the owner or staff.
 - Vehicles referenced by any booking cannot be deleted; return 409 instead.
 
-This matrix documents Step 2 decisions, not a claim that later services or the
-Step 6 functional/authorization suites are already implemented.
+## Rental API
+
+- `POST /login` checks the three fixed accounts using environment-provided
+  passwords hashed in memory with salted PBKDF2-HMAC-SHA256 (600,000 iterations).
+  Roles come from server configuration, never login input. Failed logins return
+  the same 401 message for unknown users and wrong passwords.
+- Protected fleet routes forward the signed caller token unchanged; the fleet
+  service independently rechecks signature, role, scope and ownership.
+- `POST /bookings/{id}/agreement` sends only a booking-scoped token to the planned
+  processor route `POST /agreements/{id}`. Staff can initiate processing, but
+  even their processor token has no bulk access. The processor and fleet must
+  check the bound booking and original renter's ownership.
+- `GET /bookings/{id}/agreement` retrieves the stored invoice through fleet
+  authorization. No public rental API route writes invoice content directly.
+- No registration, password database, account-management API or refresh tokens
+  are added. These are demo accounts, not a production identity system.
+
+This matrix documents implemented Step 2/3 decisions. The agreement processor
+implementation and Step 6 formal functional/authorization suites remain pending.
