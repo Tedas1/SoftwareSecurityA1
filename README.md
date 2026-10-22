@@ -227,8 +227,8 @@ Step 7 and are not part of the initial CI gate.
 ## CI and actual evidence
 
 The [workflow](.github/workflows/ci.yml) runs on push and pull requests using
-read-only repository permissions and pinned official actions. Each job installs
-the approved inputs in a clean virtual environment.
+read-only repository permissions and pinned official actions. Both jobs use
+Python 3.14.9 and install the approved inputs in a clean virtual environment.
 
 - Build: editable services/renderer, `pip check`, Ruff, Bandit over `app/`, and
   pip-audit. Findings are not globally suppressed. Native pip-audit blocks all
