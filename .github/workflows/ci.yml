@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.14"
+      - name: Install approved dependencies and editable projects
+        id: install
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --no-deps -r requirements.txt
+          .venv/bin/python -m pip install --no-deps --no-build-isolation --check-build-dependencies -e . -e external/rental_invoice_render
+          .venv/bin/python -m pip check
+      - name: Ruff
+        run: .venv/bin/python -m ruff check .
+      - name: Bandit
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: .venv/bin/python -m bandit -r app/ --format json --output bandit.json
+      - name: Dependency audit
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: .venv/bin/python -m pip_audit --progress-spinner off --format json --output pip-audit.json
+      - name: Save build reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-reports
+          path: |
+            bandit.json
+            pip-audit.json
+          if-no-files-found: error
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.14"
+      - name: Install approved dependencies and editable projects
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --no-deps -r requirements.txt
+          .venv/bin/python -m pip install --no-deps --no-build-isolation --check-build-dependencies -e . -e external/rental_invoice_render
+          .venv/bin/python -m pip check
+      - name: Functional and authorization suites
+        run: |
+          set -o pipefail
+          .venv/bin/python -m pytest -q tests/test_functional.py tests/test_authz.py --junitxml=pytest.xml 2>&1 | tee pytest.txt
+      - name: Save pytest reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pytest-results
+          path: |
+            pytest.xml
+            pytest.txt
+          if-no-files-found: error
