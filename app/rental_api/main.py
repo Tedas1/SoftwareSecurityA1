@@ -4,6 +4,7 @@ import secrets
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Literal
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -89,22 +90,15 @@ def list_vehicles(request: Request) -> Response:
     return forward("fleet", "GET", "/vehicles", request.headers["authorization"])
 
 
+@protected.get("/vehicles/search")
+def search_vehicles(name: str, request: Request) -> Response:
+    path = "/vehicles/search?" + urlencode({"name": name})
+    return forward("fleet", "GET", path, request.headers["authorization"])
+
+
 @protected.post("/vehicles", status_code=201, dependencies=[Depends(staff_only)])
 def create_vehicle(body: dict[str, object], request: Request) -> Response:
     return forward("fleet", "POST", "/vehicles", request.headers["authorization"], body)
-
-
-@protected.put("/vehicles/{vehicle_id}", dependencies=[Depends(staff_only)])
-def update_vehicle(
-    vehicle_id: PositiveId, body: dict[str, object], request: Request
-) -> Response:
-    return forward(
-        "fleet",
-        "PUT",
-        f"/vehicles/{vehicle_id}",
-        request.headers["authorization"],
-        body,
-    )
 
 
 @protected.delete(
@@ -147,10 +141,21 @@ def cancel_booking(booking_id: PositiveId, request: Request) -> Response:
     )
 
 
+@protected.post("/bookings/{booking_id}/override-cancel")
+def override_cancel_booking(booking_id: PositiveId, request: Request) -> Response:
+    return forward(
+        "fleet",
+        "POST",
+        f"/bookings/{booking_id}/override-cancel",
+        request.headers["authorization"],
+    )
+
+
 @protected.post("/bookings/{booking_id}/agreement")
 def generate_agreement(booking_id: PositiveId, identity: User) -> Response:
+    # CWE-441: Unintended Proxy or Intermediary; intentionally delegate staff authority regardless of the caller's role.
     scoped = issue_token(
-        identity.sub, identity.role, booking_id=booking_id, expires_at=identity.exp
+        "rental-api", "staff", booking_id=booking_id, expires_at=identity.exp
     )
     return forward("agreement", "POST", f"/agreements/{booking_id}", f"Bearer {scoped}")
 

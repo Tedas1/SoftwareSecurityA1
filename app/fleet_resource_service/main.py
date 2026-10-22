@@ -14,8 +14,9 @@ PositiveId = Annotated[int, Path(gt=0, le=2**63 - 1)]
 
 
 class VehicleInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid")
 
+    # CWE-20: Improper Input Validation; accepts white space car names
     name: str = Field(min_length=1, max_length=100)
     daily_rate_cents: int = Field(strict=True, gt=0, le=2**31 - 1)
 
@@ -76,6 +77,18 @@ def list_vehicles(identity: User, db: Database) -> list[dict[str, object]]:
     return [dict(row) for row in db.execute("SELECT * FROM vehicles ORDER BY id")]
 
 
+# CWE-89 SQL Injection
+@app.get("/vehicles/search")
+def search_vehicles(
+    name: str, identity: User, db: Database
+) -> list[dict[str, object]]:
+    cursor = db.cursor()
+    rows = cursor.execute(
+        f"SELECT * FROM vehicles WHERE name LIKE '%{name}%' ORDER BY id"
+    )
+    return [dict(row) for row in rows]
+
+
 @app.post("/vehicles", status_code=201, dependencies=[Depends(staff_only)])
 def create_vehicle(vehicle: VehicleInput, db: Database) -> dict[str, object]:
     with db:
@@ -83,21 +96,6 @@ def create_vehicle(vehicle: VehicleInput, db: Database) -> dict[str, object]:
             "INSERT INTO vehicles (name, daily_rate_cents) VALUES (?, ?) RETURNING *",
             (vehicle.name, vehicle.daily_rate_cents),
         ).fetchone()
-    return dict(row)
-
-
-@app.put("/vehicles/{vehicle_id}", dependencies=[Depends(staff_only)])
-def update_vehicle(
-    vehicle_id: PositiveId, vehicle: VehicleInput, db: Database
-) -> dict[str, object]:
-    with db:
-        row = db.execute(
-            "UPDATE vehicles SET name = ?, daily_rate_cents = ? "
-            "WHERE id = ? RETURNING *",
-            (vehicle.name, vehicle.daily_rate_cents, vehicle_id),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="Vehicle not found")
     return dict(row)
 
 
@@ -184,6 +182,19 @@ def cancel_booking(booking: Booking, identity: User, db: Database) -> dict[str, 
         ).fetchone()
     return dict(row)
 
+# CWE-862 Missing Authorization / IDOR
+@app.post("/bookings/{booking_id}/override-cancel")
+def override_cancel_booking(
+    booking_id: PositiveId, identity: User, db: Database
+) -> dict[str, object]:
+    with db:
+        row = db.execute(
+            "UPDATE bookings SET status = 'cancelled' WHERE id = ? RETURNING *",
+            (booking_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Booking not found")
+    return dict(row)
 
 @app.put("/bookings/{booking_id}/invoice")
 def save_invoice(
