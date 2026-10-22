@@ -6,7 +6,7 @@ from typing import Annotated, Self
 from fastapi import Depends, FastAPI, HTTPException, Path, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.auth import Principal, User, jwt_key, staff_only
+from app.auth import Agreement, Principal, User, jwt_key, staff_only
 from app.fleet_resource_service.db import connection, initialize
 
 Database = Annotated[sqlite3.Connection, Depends(connection)]
@@ -187,10 +187,8 @@ def cancel_booking(booking: Booking, identity: User, db: Database) -> dict[str, 
 
 @app.put("/bookings/{booking_id}/invoice")
 def save_invoice(
-    invoice: InvoiceInput, booking: Booking, identity: Principal, db: Database
+    invoice: InvoiceInput, booking: Booking, identity: Agreement, db: Database
 ) -> dict[str, object]:
-    if identity.scope != "agreement":
-        raise HTTPException(status_code=403, detail="An agreement token is required")
     with db:
         db.execute("BEGIN IMMEDIATE")
         current = db.execute(

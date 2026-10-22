@@ -1,18 +1,16 @@
 import hashlib
-import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import Role, User, issue_token, jwt_key, staff_only, user_only
+from app.http import forward
 
-logger = logging.getLogger(__name__)
 PositiveId = Annotated[int, Path(gt=0, le=2**63 - 1)]
 DEMO_ROLES: dict[str, Role] = {
     "alice": "renter",
@@ -84,45 +82,6 @@ def login(credentials: LoginInput, response: Response) -> TokenResponse:
         )
     response.headers["Cache-Control"] = "no-store"
     return TokenResponse(access_token=issue_token(credentials.username, account.role))
-
-
-def forward(
-    service: Literal["fleet", "agreement"],
-    method: str,
-    path: str,
-    authorization: str,
-    body: dict[str, object] | None = None,
-) -> Response:
-    defaults = {"fleet": "http://127.0.0.1:8001", "agreement": "http://127.0.0.1:8002"}
-    base_url = os.environ.get(f"{service.upper()}_SERVICE_URL", defaults[service])
-    try:
-        upstream = httpx.request(
-            method,
-            base_url.rstrip("/") + path,
-            headers={"Authorization": authorization},
-            json=body,
-            timeout=10,
-            trust_env=False,
-            follow_redirects=False,
-        )
-    except httpx.TimeoutException as exc:
-        logger.warning("%s service timed out", service)
-        raise HTTPException(
-            status_code=504, detail=f"{service} service timed out"
-        ) from exc
-    except httpx.RequestError as exc:
-        logger.warning("%s service unavailable", service)
-        raise HTTPException(
-            status_code=502, detail=f"{service} service unavailable"
-        ) from exc
-    headers = {
-        name: upstream.headers[name]
-        for name in ("content-type", "www-authenticate")
-        if name in upstream.headers
-    }
-    return Response(
-        content=upstream.content, status_code=upstream.status_code, headers=headers
-    )
 
 
 @protected.get("/vehicles")

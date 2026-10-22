@@ -3,7 +3,7 @@
 Secure-SDLC course project with three FastAPI services, each running in its own
 process. Only the fleet resource service will own the SQLite database.
 
-## Current checkpoint: Step 3
+## Current checkpoint: Step 4
 
 Implemented: fleet SQLite schema, five-vehicle seed support, independently
 verified JWTs, role/ownership/scoped authorization, fleet management, dated
@@ -14,9 +14,10 @@ The rental API now authenticates three demo accounts, issues 15-minute JWTs,
 verifies callers, forwards fleet operations over HTTP and delegates agreement
 requests with booking-scoped tokens. It never opens the fleet database.
 
-Agreement rendering over HTTP, the complete three-service flow, formal test
-suites and CI are not implemented yet. The agreement processor remains a
-skeleton; its delegated endpoint will be implemented in Step 4.
+The agreement processor now verifies scoped JWTs, fetches one booking over HTTP,
+renders through the installed external package, and saves the invoice through
+fleet. Complete three-service verification remains Step 5; formal test suites
+and CI remain later checkpoints.
 
 The [lifecycle plan](docs/lifecycle-plan.md) was committed separately before
 feature code in commit `466fca9`.
@@ -87,13 +88,20 @@ accounts are recreated at startup from the environment, not stored in SQLite.
 .\.venv\Scripts\python.exe -m uvicorn app.rental_api.main:app --host 127.0.0.1 --port 8000
 ```
 
-## Run the agreement skeleton
+## Run the agreement processor
 
 In a third terminal at the repository root:
 
 ```powershell
+$env:JWT_SECRET = .\.venv\Scripts\python.exe -c "from getpass import getpass; print(getpass('Shared JWT secret: '))"
+$env:FLEET_SERVICE_URL = "http://127.0.0.1:8001"
 .\.venv\Scripts\python.exe -m uvicorn app.agreement_processor.main:app --host 127.0.0.1 --port 8002
 ```
+
+Use the same shared key. The processor needs no demo passwords or database path.
+Startup fails without a valid key. Its only domain route is
+`POST /agreements/{booking_id}`, and normal user JWTs are denied: only the rental
+API should delegate an agreement-scoped JWT for a specific booking.
 
 OpenAPI documents:
 
@@ -133,8 +141,9 @@ The rental API mirrors the fleet vehicle/booking/cancellation routes. Staff
 authenticate as Carol to manage the fleet and see/cancel any booking.
 `POST /bookings/{id}/agreement` delegates a scoped JWT to the processor, while
 `GET /bookings/{id}/agreement` retrieves an existing invoice through fleet.
-Generation does not work until Step 4 implements the processor endpoint; the
-API propagates downstream errors rather than pretending an agreement exists.
+The processor route is implemented; coordinated three-service verification is
+the next checkpoint. The API propagates downstream errors rather than
+pretending an agreement exists.
 Unreachable downstream services return 502; timeouts return 504. Fleet status
 codes and authorization errors are preserved.
 
@@ -142,8 +151,15 @@ codes and authorization errors are preserved.
 
 `rental_invoice_render.render_invoice(invoice, output_path)` accepts a dictionary
 and a `pathlib.Path`, writes a UTF-8 text invoice, and returns that path. The
-agreement processor will choose the output path; HTTP callers must never choose
+agreement processor chooses the output path; HTTP callers must never choose
 filesystem paths. Rendering and filesystem errors propagate to the caller.
+
+The processor imports the installed package directly. It renders to a unique
+temporary `invoice.txt`, reads bounded UTF-8 text, removes the temporary file,
+and writes the text back to fleet. SQLite is the persisted invoice copy, so no
+separate processor file-retention system is needed. Invalid upstream booking
+data returns 502; rendering failures or empty/oversized output return 500 without
+saving. Cancellation before write-back returns fleet's 409.
 
 ## Validation
 

@@ -105,6 +105,16 @@ def user_only(identity: Principal) -> Claims:
 User = Annotated[Claims, Depends(user_only)]
 
 
+def agreement_only(identity: Principal) -> Claims:
+    """Only booking-scoped credentials may invoke processor operations."""
+    if identity.scope != "agreement":
+        raise HTTPException(status_code=403, detail="An agreement token is required")
+    return identity
+
+
+Agreement = Annotated[Claims, Depends(agreement_only)]
+
+
 def staff_only(identity: User) -> Claims:
     if identity.role != "staff":
         raise HTTPException(status_code=403, detail="Staff access is required")

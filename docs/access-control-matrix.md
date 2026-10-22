@@ -45,7 +45,7 @@ token with insufficient authority returns 403. OpenAPI/docs expose no domain dat
   the same 401 message for unknown users and wrong passwords.
 - Protected fleet routes forward the signed caller token unchanged; the fleet
   service independently rechecks signature, role, scope and ownership.
-- `POST /bookings/{id}/agreement` sends only a booking-scoped token to the planned
+- `POST /bookings/{id}/agreement` sends only a booking-scoped token to the
   processor route `POST /agreements/{id}`. Staff can initiate processing, but
   even their processor token has no bulk access. The processor and fleet must
   check the bound booking and original renter's ownership.
@@ -54,5 +54,20 @@ token with insufficient authority returns 403. OpenAPI/docs expose no domain dat
 - No registration, password database, account-management API or refresh tokens
   are added. These are demo accounts, not a production identity system.
 
-This matrix documents implemented Step 2/3 decisions. The agreement processor
-implementation and Step 6 formal functional/authorization suites remain pending.
+## Agreement processor
+
+- Only `POST /agreements/{id}` is a domain endpoint. It requires a verified
+  agreement-scoped JWT bound to that exact ID. General user tokens are denied.
+- It fetches only that booking and writes only that booking's invoice through
+  fleet HTTP endpoints. Both calls carry the scoped token, not a general token.
+- It validates fleet data before rendering. The separately installed renderer
+  receives a dictionary and a server-selected temporary path; no caller path
+  is accepted or used. Empty/oversized output fails without saving an invoice.
+- The temporary file is removed after reading. Fleet SQLite stores the canonical
+  text invoice; the processor never opens the database.
+- Fleet rechecks ownership and current booking status when saving. Cancellation
+  during rendering returns 409 rather than saving an invoice for a cancelled
+  booking. No failed upstream/rendering operation is reported as success.
+
+This matrix documents implemented Step 2-4 decisions. The complete three-service
+checkpoint and Step 6 formal functional/authorization suites remain pending.
