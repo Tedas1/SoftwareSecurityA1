@@ -1,33 +1,17 @@
 # Secure Car Rental System
 
-Secure-SDLC course project with three FastAPI services, each running in its own
-process. Only the fleet resource service owns the SQLite database.
+Secure-SDLC course project with three FastAPI services:
 
-## Current checkpoint: Steps 1-6 complete; documentation and CI from Step 8
+- Rental API: login, bookings, and requests to the other services.
+- Fleet resource service: vehicles, bookings, and SQLite storage.
+- Agreement processor: invoice generation through an external renderer.
 
-Implemented: fleet SQLite schema, five-vehicle seed support, independently
-verified JWTs, role/ownership/scoped authorization, fleet management, dated
-bookings/cancellation and invoice persistence. The three services share the root
-installation; the renderer remains a separately packaged editable dependency.
+Each service runs in its own process and verifies JWTs. Only fleet opens the
+database. User tokens expire after 15 minutes.
 
-The rental API now authenticates three demo accounts, issues 15-minute JWTs,
-verifies callers, forwards fleet operations over HTTP and delegates agreement
-requests with booking-scoped tokens. It never opens the fleet database.
+## Install
 
-The agreement processor now verifies scoped JWTs, fetches one booking over HTTP,
-renders through the installed external package, and saves the invoice through
-fleet. The complete login, booking, generation and retrieval flow has been
-verified with three independent Uvicorn processes and a fresh seeded SQLite
-database, including cross-renter denials and staff operations. Formal functional
-and authorization pytest suites cover the required behavior. Step 7 is deferred
-until its PoC requirements are supplied; the final report remains last.
-
-The [lifecycle plan](docs/lifecycle-plan.md) was committed separately before
-feature code in commit `466fca9`.
-
-## Install (PowerShell, from the repository root)
-
-Requires Python 3.12 or newer.
+Requires Python 3.12+. Run commands in PowerShell from the repository root.
 
 ```powershell
 python -m venv .venv
@@ -36,24 +20,21 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-The pinned [requirements](requirements.txt) include direct/transitive packages
-and build/CI tools. `--no-deps` prevents silently installing unlisted packages;
-build-requirement checks and `pip check` reject missing/incompatible inputs.
-The root project installs all three services.
-The renderer has its own [project metadata](external/rental_invoice_render/pyproject.toml)
-and is installed editable, not copied into a service.
+The pinned [requirements](requirements.txt) include dependencies and build tools.
+`--no-deps` limits installation to that list; the checks catch missing or
+incompatible packages. The root package contains all three services; the
+[renderer](external/rental_invoice_render/pyproject.toml) installs separately.
 
-## Seed and run the fleet service (PowerShell)
+## Seed and run fleet
 
-From the repository root:
+Generate one shared JWT key for all three services:
 
 ```powershell
 .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Generate that shared key once and retain it privately outside the repository.
-Enter the same value at all three service prompts; never include it in
-commits or captured logs:
+Keep the key outside the repository and use it at each service's prompt.
+It must be at least 32 UTF-8 bytes.
 
 ```powershell
 $env:JWT_SECRET = .\.venv\Scripts\python.exe -c "from getpass import getpass; print(getpass('Shared JWT secret: '))"
@@ -62,20 +43,14 @@ $env:FLEET_DB_PATH = Join-Path (Get-Location) "runtime\fleet.sqlite3"
 .\.venv\Scripts\python.exe -m uvicorn app.fleet_resource_service.main:app --host 127.0.0.1 --port 8001
 ```
 
-Startup creates the schema but does not seed automatically. The seed command
-inserts five vehicles with fixed IDs and does not overwrite existing IDs.
-`FLEET_DB_PATH` defaults to `runtime\fleet.sqlite3`; only the fleet service opens
-this database. Data and invoice content persist across restarts.
+Startup creates the schema without seeding. The seed command adds five vehicles
+with fixed IDs, leaving existing IDs unchanged. `FLEET_DB_PATH` defaults to
+`runtime\fleet.sqlite3`. Bookings and invoices persist across restarts.
 
-Fleet startup fails if `JWT_SECRET` is missing or shorter than 32 UTF-8 bytes.
-Keep the generated key private and never commit it. All three services receive
-the same key, not independently generated keys.
+## Run the rental API
 
-## Run the rental API (PowerShell)
-
-In another terminal at the repository root, configure the **same** `JWT_SECRET`
-used by fleet. Supply three private demo passwords (8-1024 characters); these
-commands prompt without echo and do not put passwords in command history:
+In a second terminal, enter the same JWT key and three demo passwords
+(8-1024 characters). The prompts hide input and keep it out of command history.
 
 ```powershell
 $env:JWT_SECRET = .\.venv\Scripts\python.exe -c "from getpass import getpass; print(getpass('Shared JWT secret: '))"
@@ -86,10 +61,10 @@ $env:FLEET_SERVICE_URL = "http://127.0.0.1:8001"
 $env:AGREEMENT_SERVICE_URL = "http://127.0.0.1:8002"
 ```
 
-Both service URLs default to the values shown. Rental API startup fails for a
-missing/short signing key or missing/invalid demo passwords. Alice and Bob are
-renters; Carol is staff. Passwords are salted PBKDF2 hashes in memory only; fixed
-accounts are recreated at startup from the environment, not stored in SQLite.
+The URLs shown are the defaults. All services reject a missing or short JWT key;
+the rental API also requires valid demo passwords. Alice and Bob are renters;
+Carol is staff. Accounts are recreated at startup, with salted PBKDF2 password
+hashes held in memory rather than SQLite.
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.rental_api.main:app --host 127.0.0.1 --port 8000
@@ -97,7 +72,7 @@ accounts are recreated at startup from the environment, not stored in SQLite.
 
 ## Run the agreement processor
 
-In a third terminal at the repository root:
+In a third terminal:
 
 ```powershell
 $env:JWT_SECRET = .\.venv\Scripts\python.exe -c "from getpass import getpass; print(getpass('Shared JWT secret: '))"
@@ -105,10 +80,9 @@ $env:FLEET_SERVICE_URL = "http://127.0.0.1:8001"
 .\.venv\Scripts\python.exe -m uvicorn app.agreement_processor.main:app --host 127.0.0.1 --port 8002
 ```
 
-Use the same shared key. The processor needs no demo passwords or database path.
-Startup fails without a valid key. Its only domain route is
-`POST /agreements/{booking_id}`, and normal user JWTs are denied: only the rental
-API should delegate an agreement-scoped JWT for a specific booking.
+The processor needs no passwords or database path. Its only domain route,
+`POST /agreements/{booking_id}`, accepts booking-scoped agreement tokens,
+not normal user tokens.
 
 OpenAPI documents:
 
@@ -116,13 +90,13 @@ OpenAPI documents:
 - Fleet resource service: <http://127.0.0.1:8001/openapi.json>
 - Agreement processor: <http://127.0.0.1:8002/openapi.json>
 
-Use Ctrl+C in each terminal to stop that service.
+Stop each service with Ctrl+C.
 
 ## Login and book through the rental API
 
-See the [access-control matrix](docs/access-control-matrix.md) for operations and
-permissions. The rental API and fleet domain routes require a bearer JWT.
-In a client terminal, authenticate without placing a password in command history:
+Rental API and fleet domain routes require a bearer JWT.
+See the [access-control matrix](docs/access-control-matrix.md) for permissions.
+Log in from a client terminal:
 
 ```powershell
 $password = .\.venv\Scripts\python.exe -c "from getpass import getpass; print(getpass('Alice password: '))"
@@ -137,7 +111,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/bookings/$($booking.id)" -Headers 
 
 ### Generate and retrieve the agreement
 
-With all three services running and the variables from the previous example:
+With all three services running, continue from the previous example:
 
 ```powershell
 $agreementUri = "http://127.0.0.1:8000/bookings/$($booking.id)/agreement"
@@ -146,11 +120,10 @@ $saved = Invoke-RestMethod -Uri $agreementUri -Headers $headers
 $saved.content
 ```
 
-Generation follows rental API -> agreement processor -> fleet fetch -> external
-renderer -> fleet invoice save. Retrieval follows rental API -> fleet. The
-processor receives only a JWT bound to this booking, never the general user JWT.
-The returned JSON has `booking_id` and `content`; both calls return the same
-stored text.
+Generation follows rental API -> processor -> fleet fetch -> renderer -> fleet
+save. Retrieval goes directly from the API to fleet. The processor receives a
+booking-scoped token, not the user's token. Both calls return `booking_id` and
+the same stored `content`.
 
 To cancel the booking as its owner:
 
@@ -158,41 +131,136 @@ To cancel the booking as its owner:
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/bookings/$($booking.id)/cancel" -Headers $headers
 ```
 
-Run the example against an available interval: repeating creation for the same
-vehicle/dates while a pending booking exists returns 409.
+- Bookings start as `pending`; ownership comes from the JWT, not the request.
+- Return dates are exclusive. Overlapping pending bookings return 409, including
+  concurrent requests. Cancellation frees the dates.
+- Prices are stored in integer cents and do not change with later vehicle rates.
+- Carol can manage vehicles and view or cancel any booking.
+- Only `scope="agreement"` tokens tied to a `booking_id` can fetch that booking
+  and write its invoice. They cannot list bookings, access vehicles, cancel
+  bookings, or retrieve invoices.
+- The API preserves downstream status codes. Unreachable services return 502;
+  timeouts return 504.
 
-The token's subject establishes ownership; neither ownership nor initial status
-is accepted in a booking request. New bookings default to `pending`. Rental
-dates use an exclusive return date. Overlapping pending bookings return 409,
-including concurrent requests. Cancellation releases the interval. The total
-price is captured in integer cents and survives later fleet price changes.
+## Test the vulnerabilities manually
 
-Normal user tokens cannot write invoices. Only `scope="agreement"` tokens bound
-to one `booking_id` can fetch that booking and write its text invoice; they cannot
-list bookings, access the fleet, cancel bookings or retrieve invoices.
+Start all three services as above. Run these steps in order in one client
+terminal. They add vehicles and a booking to your configured database; each run
+creates fresh records, so existing bookings won't cause date conflicts.
 
-The rental API mirrors the fleet vehicle/booking/cancellation routes. Staff
-authenticate as Carol to manage the fleet and see/cancel any booking.
-`POST /bookings/{id}/agreement` delegates a scoped JWT to the processor, while
-`GET /bookings/{id}/agreement` retrieves an existing invoice through fleet.
-All three services participate in the verified generation flow. The API
-propagates downstream errors rather than pretending an agreement exists.
-Unreachable downstream services return 502; timeouts return 504. Fleet status
-codes and authorization errors are preserved.
+### Log in
+
+Enter the passwords used when starting the rental API:
+
+```powershell
+$api = "http://127.0.0.1:8000"
+$fleet = "http://127.0.0.1:8001"
+$auth = @{}
+foreach ($user in "alice", "bob", "carol") {
+    $password = .\.venv\Scripts\python.exe -c "from getpass import getpass; print(getpass('$user password: '))"
+    $credentials = @{ username = $user; password = $password } | ConvertTo-Json
+    $login = Invoke-RestMethod -Method Post -Uri "$api/login" -ContentType "application/json" -Body $credentials
+    $auth[$user] = @{ Authorization = "Bearer $($login.access_token)" }
+}
+```
+
+Tokens last 15 minutes. Repeat login if a request returns 401.
+
+### 1. Vehicle validation (CWE-20)
+
+As Carol, create a vehicle whose name is three spaces, then read it from fleet:
+
+```powershell
+$body = @{ name = "   "; daily_rate_cents = 35000 } | ConvertTo-Json
+$invalidVehicle = Invoke-RestMethod -Method Post -Uri "$api/vehicles" -Headers $auth.carol -ContentType "application/json" -Body $body
+$vehicles = Invoke-RestMethod -Uri "$fleet/vehicles" -Headers $auth.carol
+$vehicles | Where-Object id -eq $invalidVehicle.id | ConvertTo-Json
+```
+
+Expected: creation succeeds (201), and the saved vehicle has `"name": "   "`.
+Names pass the 1-100 character length check without trimming. An empty string
+still returns 422; renters still cannot create vehicles.
+
+`PUT /vehicles/{id}` is removed from both services. Creation, listing, search,
+deletion, and invoice-saving PUT remain.
+
+### 2. SQL injection (CWE-89)
+
+Search for a random name, then append a condition that matches every row:
+
+```powershell
+$name = "no-such-vehicle-$([guid]::NewGuid().ToString('N'))"
+$plain = [uri]::EscapeDataString($name)
+$injected = [uri]::EscapeDataString("$name%' OR 1=1 --")
+$noMatch = Invoke-RestMethod -Uri "$api/vehicles/search?name=$plain" -Headers $auth.bob
+$matches = Invoke-RestMethod -Uri "$api/vehicles/search?name=$injected" -Headers $auth.bob
+$all = Invoke-RestMethod -Uri "$api/vehicles" -Headers $auth.bob
+"Normal search: $($noMatch.Count); injected search: $($matches.Count); all vehicles: $($all.Count)"
+```
+
+Expected: the normal search returns 0 vehicles; the injected search returns
+every vehicle, matching the last count. Fleet inserts the search text into SQL
+with an f-string instead of a parameterized query. This payload only reads data.
+To check fleet directly, repeat with `$fleet` instead of `$api`.
+
+Bandit reports this as `B608`; the finding is not suppressed and is expected to
+fail the security gate.
+
+### 3. Confused deputy (CWE-441)
+
+Create a valid vehicle as Carol and book it as Alice:
+
+```powershell
+$body = @{ name = "Manual demo"; daily_rate_cents = 35000 } | ConvertTo-Json
+$demoVehicle = Invoke-RestMethod -Method Post -Uri "$api/vehicles" -Headers $auth.carol -ContentType "application/json" -Body $body
+$body = @{ vehicle_id = $demoVehicle.id; start_date = "2030-06-01"; end_date = "2030-06-03" } | ConvertTo-Json
+$demoBooking = Invoke-RestMethod -Method Post -Uri "$api/bookings" -Headers $auth.alice -ContentType "application/json" -Body $body
+$bookingUrl = "$api/bookings/$($demoBooking.id)"
+```
+
+As Bob, try reading Alice's booking directly, then request its agreement:
+
+```powershell
+curl.exe -sS -i -H "Authorization: $($auth.bob.Authorization)" "$fleet/bookings/$($demoBooking.id)"
+$leaked = Invoke-RestMethod -Method Post -Uri "$bookingUrl/agreement" -Headers $auth.bob
+$leaked.content
+$saved = Invoke-RestMethod -Uri "$bookingUrl/agreement" -Headers $auth.alice
+$saved.content -ceq $leaked.content
+```
+
+Expected: the direct read returns 403, but agreement generation succeeds (200).
+The invoice contains `renter_id: alice`, and the final comparison prints `True`.
+The API delegates a token with `sub="rental-api"` and `role="staff"` regardless
+of Bob's role. Expiry and booking scope still apply.
+
+### 4. Missing authorization (CWE-862 / IDOR)
+
+Keep the same booking. As Bob, try normal cancellation, then the override:
+
+```powershell
+curl.exe -sS -i -X POST -H "Authorization: $($auth.bob.Authorization)" "$bookingUrl/cancel"
+$cancelled = Invoke-RestMethod -Method Post -Uri "$bookingUrl/override-cancel" -Headers $auth.bob
+$cancelled.status
+(Invoke-RestMethod -Uri $bookingUrl -Headers $auth.alice).status
+```
+
+Expected: normal cancellation returns 403. The override succeeds (200), and both
+status lines print `cancelled`, confirming Alice's booking was changed.
+The override checks authentication but not role or ownership. Both services
+expose it; agreement-scoped tokens are rejected.
 
 ## External renderer
 
-`rental_invoice_render.render_invoice(invoice, output_path)` accepts a dictionary
-and a `pathlib.Path`, writes a UTF-8 text invoice, and returns that path. The
-agreement processor chooses the output path; HTTP callers must never choose
-filesystem paths. Rendering and filesystem errors propagate to the caller.
+`rental_invoice_render.render_invoice(invoice, output_path)` takes a dictionary
+and a `pathlib.Path`, writes a UTF-8 invoice, and returns the path.
 
-The processor imports the installed package directly. It renders to a unique
-temporary `invoice.txt`, reads bounded UTF-8 text, removes the temporary file,
-and writes the text back to fleet. SQLite is the persisted invoice copy, so no
-separate processor file-retention system is needed. Invalid upstream booking
-data returns 502; rendering failures or empty/oversized output return 500 without
-saving. Cancellation before write-back returns fleet's 409.
+The processor imports the installed package and chooses a temporary `invoice.txt`
+path. It reads the output with a size limit, removes the file, and saves the text
+through fleet. SQLite holds the saved copy.
+
+Invalid upstream booking data returns 502. Rendering or filesystem errors and
+empty or oversized output return 500 without saving. Cancellation before
+write-back returns 409.
 
 ## Validation
 
@@ -204,71 +272,38 @@ saving. Cancellation before write-back returns fleet's 409.
 .\.venv\Scripts\python.exe -m pytest -q tests\test_functional.py tests\test_authz.py
 ```
 
-The suites create a fresh temporary SQLite database, seed it through the fleet
-module, generate private test credentials, and run three real service processes
-on temporary loopback ports. No manually running services or environment setup
-are needed for tests. Each test uses its own vehicle/booking records; cleanup
-stops only the processes started by the fixture. Existing runtime data is not
-touched.
+Tests seed a temporary SQLite database and start three service processes with
+generated credentials on local ports. No manual setup is needed; existing
+runtime data is untouched, and cleanup stops only the test processes.
 
-The fleet module command above is the idempotent seed script; no duplicate
-wrapper is needed. The rental API creates the three fixed demo accounts from
-its configured environment passwords at startup.
+The [functional suite](tests/test_functional.py) covers seeding, agreements,
+staff operations, pricing, availability, concurrent booking conflicts, and the
+validation and SQL injection flaws. The [authorization suite](tests/test_authz.py)
+covers permissions and includes `test_least_privilege`,
+`test_complete_mediation`, and `test_fail_safe_defaults`.
 
-The [authorization suite](tests/test_authz.py) includes one named evidence test
-for each principle: `test_least_privilege`, `test_complete_mediation`, and
-`test_fail_safe_defaults`. The [functional suite](tests/test_functional.py)
-covers seeding, the complete agreement workflow, staff fleet/booking operations,
-price snapshots, date availability and concurrent overlap rejection.
+## CI
 
-Security-demonstration tests wait for separately supplied requirements in
-Step 7 and are not part of the initial CI gate.
+The [workflow](.github/workflows/ci.yml) runs on pushes and pull requests with
+Python 3.14.9, pinned actions, and read-only repository permissions.
 
-## CI and actual evidence
+- Build: package installation, `pip check`, Ruff, Bandit, and pip-audit.
+  pip-audit blocks all known findings.
+- Test: functional and authorization suites with temporary SQLite.
+- Artifacts: `build-reports` contains `bandit.json` and `pip-audit.json`;
+  `pytest-results` contains `pytest.xml` and `pytest.txt`. Uploads run even
+  when checks fail.
 
-The [workflow](.github/workflows/ci.yml) runs on push and pull requests using
-read-only repository permissions and pinned official actions. Both jobs use
-Python 3.14.9 and install the approved inputs in a clean virtual environment.
+See [Actions](https://github.com/Tedas1/SoftwareSecurityA1/actions/workflows/ci.yml)
+for run results and artifacts.
 
-- Build: editable services/renderer, `pip check`, Ruff, Bandit over `app/`, and
-  pip-audit. Findings are not globally suppressed. Native pip-audit blocks all
-  known findings, including high/critical; custom severity filtering is deferred.
-- Test: the two functional/authorization suites against fresh temporary SQLite.
-  `pipefail` preserves pytest's failure status while saving its console output.
-- Actual `actions/upload-artifact` outputs: `build-reports` contains
-  `bandit.json` and `pip-audit.json`; `pytest-results` contains `pytest.xml` and
-  `pytest.txt`. Uploads run even when checks fail.
+## Documentation
 
-Use [Actions](https://github.com/Tedas1/SoftwareSecurityA1/actions/workflows/ci.yml)
-to inspect the run's commit, result and downloadable artifacts. A workflow
-definition or local scan is not proof of a successful Actions run. Artifact
-contents must come from actual uploads, never hand-written replacements.
-
-Version pins are not wheel hash/provenance verification. TLS, independent
-signing authority, password lifecycle, abuse controls, durable audit logging,
-database/invoice retention and recovery remain production-readiness gaps.
-
-## Design documentation and remaining submission work
-
-- [Lifecycle plan](docs/lifecycle-plan.md), originally committed before features.
-- [Access-control matrix and principle evidence](docs/access-control-matrix.md).
+- [Lifecycle plan](docs/lifecycle-plan.md).
+- [Access-control matrix](docs/access-control-matrix.md).
 - [STRIDE analysis](docs/stride-analysis.md).
 - [Threat model, asset register and trust boundaries](docs/threat-model.md).
 
-Step 7 remains pending owner requirements. Write the 2,000-2,500-word report only
-after that implementation and real CI verification, citing actual commits,
-tests and logs. The project owner drafts the AI-use declaration.
-
-## Build checkpoints
-
-1. Skeleton and external package.
-2. Fleet schema, seed support, and authorization dependencies.
-3. Rental authentication, JWT issuance, and routing.
-4. Agreement processor using fleet HTTP calls and the external renderer.
-5. Complete three-service flow.
-6. Seed script and functional/authorization suites.
-7. Separately specified security-demonstration tests.
-8. Final documentation, actual CI verification, and submission report written last.
-
-Each major step is confirmed before proceeding and committed incrementally.
-The project owner writes the university AI-use declaration.
+Remaining: Step 7 requirements, CI verification, and the 2,000-2,500-word report
+with commit, test, and log references. The project owner writes the AI-use
+declaration.
