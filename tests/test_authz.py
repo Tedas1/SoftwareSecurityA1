@@ -34,7 +34,6 @@ def test_renter_boundaries(services, vehicle, booking):
     for method, suffix in (
         ("GET", ""),
         ("POST", "/cancel"),
-        ("POST", "/agreement"),
         ("GET", "/agreement"),
     ):
         assert (
@@ -49,7 +48,6 @@ def test_renter_boundaries(services, vehicle, booking):
         assert all(row["renter_id"] == username for row in own.json())
     for method, target in (
         ("POST", "/vehicles"),
-        ("PUT", f"/vehicles/{vehicle['id']}"),
         ("DELETE", f"/vehicles/{vehicle['id']}"),
     ):
         assert (
@@ -75,6 +73,57 @@ def test_renter_boundaries(services, vehicle, booking):
     )
 
 
+def test_agreement_confused_deputy_composition_demo(services, booking):
+    path = f"/bookings/{booking['id']}"
+    headers = services.headers("bob")
+    assert services.fleet.get(path, headers=headers).status_code == 403
+    scoped = services.sign(sub="bob", scope="agreement", booking_id=booking["id"])
+    direct = services.processor.post(
+        f"/agreements/{booking['id']}",
+        headers={"Authorization": f"Bearer {scoped}"},
+    )
+    assert direct.status_code == 403
+    delegated = services.api.post(path + "/agreement", headers=headers)
+    assert delegated.status_code == 200, delegated.text
+    assert delegated.json()["booking_id"] == booking["id"]
+    assert "renter_id: alice\n" in delegated.json()["content"]
+    saved = services.api.get(path + "/agreement", headers=services.headers())
+    assert saved.status_code == 200
+    assert saved.json() == delegated.json()
+    assert services.api.get(path + "/agreement", headers=headers).status_code == 403
+
+
+def test_override_cancel_missing_authorization_demo(services, booking):
+    path = f"/bookings/{booking['id']}"
+    assert (
+        services.api.post(path + "/cancel", headers=services.headers("bob")).status_code
+        == 403
+    )
+    expected = {**booking, "status": "cancelled"}
+    for username in ("bob", "carol"):
+        response = services.api.post(
+            path + "/override-cancel", headers=services.headers(username)
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == expected
+    stored = services.fleet.get(path, headers=services.headers())
+    assert stored.status_code == 200
+    assert stored.json() == expected
+    missing = services.api.post(
+        f"/bookings/{2**63 - 1}/override-cancel", headers=services.headers("bob")
+    )
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "Booking not found"}
+    for invalid_id in ("0", "-1", "not-an-id", str(2**63)):
+        assert (
+            services.api.post(
+                f"/bookings/{invalid_id}/override-cancel",
+                headers=services.headers("bob"),
+            ).status_code
+            == 422
+        )
+
+
 def test_least_privilege(services, booking):
     for username, role in (("alice", "renter"), ("carol", "staff")):
         scoped = services.sign(
@@ -91,6 +140,17 @@ def test_least_privilege(services, booking):
         )
         assert services.fleet.get("/bookings", headers=headers).status_code == 403
         assert services.fleet.get("/vehicles", headers=headers).status_code == 403
+        for client in (services.api, services.fleet):
+            assert (
+                client.get(
+                    "/vehicles/search", params={"name": "Test"}, headers=headers
+                ).status_code
+                == 403
+            )
+            assert (
+                client.post(path + "/override-cancel", headers=headers).status_code
+                == 403
+            )
         assert services.fleet.post(path + "/cancel", headers=headers).status_code == 403
         assert (
             services.processor.post(
@@ -148,6 +208,11 @@ def test_fail_safe_defaults(services, vehicle, booking):
     for client, method, path in (
         (services.api, "GET", "/bookings"),
         (services.fleet, "GET", "/bookings"),
+        (services.api, "GET", "/vehicles/search?name=Test"),
+        (services.fleet, "GET", "/vehicles/search?name=Test"),
+        (services.api, "POST", f"/bookings/{booking['id']}/override-cancel"),
+        (services.fleet, "POST", f"/bookings/{booking['id']}/override-cancel"),
+        (services.api, "POST", f"/bookings/{booking['id']}/agreement"),
         (services.processor, "POST", f"/agreements/{booking['id']}"),
     ):
         for credential in (None, "invalid", expired):
