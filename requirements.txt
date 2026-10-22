@@ -1,0 +1,9 @@
+fastapi>=0.115,<1
+uvicorn>=0.32,<1
+pydantic>=2.10,<3
+PyJWT>=2.10,<3
+httpx>=0.28,<1
+pytest>=8.3,<10
+ruff>=0.8,<1
+bandit>=1.8,<2
+pip-audit>=2.7,<3
