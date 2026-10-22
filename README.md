@@ -1,9 +1,9 @@
 # Secure Car Rental System
 
 Secure-SDLC course project with three FastAPI services, each running in its own
-process. Only the fleet resource service will own the SQLite database.
+process. Only the fleet resource service owns the SQLite database.
 
-## Current checkpoint: Step 4
+## Current checkpoint: Step 5
 
 Implemented: fleet SQLite schema, five-vehicle seed support, independently
 verified JWTs, role/ownership/scoped authorization, fleet management, dated
@@ -16,8 +16,10 @@ requests with booking-scoped tokens. It never opens the fleet database.
 
 The agreement processor now verifies scoped JWTs, fetches one booking over HTTP,
 renders through the installed external package, and saves the invoice through
-fleet. Complete three-service verification remains Step 5; formal test suites
-and CI remain later checkpoints.
+fleet. The complete login, booking, generation and retrieval flow has been
+verified with three independent Uvicorn processes and a fresh seeded SQLite
+database, including cross-renter denials and staff operations. Formal test
+suites and CI remain later checkpoints.
 
 The [lifecycle plan](docs/lifecycle-plan.md) was committed separately before
 feature code in commit `466fca9`.
@@ -45,7 +47,7 @@ From the repository root:
 ```
 
 Generate that shared key once and retain it privately outside the repository.
-Enter the same value at the fleet and rental API prompts; never include it in
+Enter the same value at all three service prompts; never include it in
 commits or captured logs:
 
 ```powershell
@@ -61,8 +63,8 @@ inserts five vehicles with fixed IDs and does not overwrite existing IDs.
 this database. Data and invoice content persist across restarts.
 
 Fleet startup fails if `JWT_SECRET` is missing or shorter than 32 UTF-8 bytes.
-Keep the generated key private and never commit it. Once the other services are
-implemented, they must receive the same key, not independently generated keys.
+Keep the generated key private and never commit it. All three services receive
+the same key, not independently generated keys.
 
 ## Run the rental API (PowerShell)
 
@@ -124,8 +126,35 @@ $login = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/login -Conten
 $headers = @{ Authorization = "Bearer $($login.access_token)" }
 Invoke-RestMethod -Uri http://127.0.0.1:8000/vehicles -Headers $headers
 $body = @{ vehicle_id = 1; start_date = "2030-06-01"; end_date = "2030-06-03" } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/bookings -Headers $headers -ContentType "application/json" -Body $body
+$booking = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/bookings -Headers $headers -ContentType "application/json" -Body $body
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/bookings/$($booking.id)" -Headers $headers
 ```
+
+### Generate and retrieve the agreement
+
+With all three services running and the variables from the previous example:
+
+```powershell
+$agreementUri = "http://127.0.0.1:8000/bookings/$($booking.id)/agreement"
+$generated = Invoke-RestMethod -Method Post -Uri $agreementUri -Headers $headers
+$saved = Invoke-RestMethod -Uri $agreementUri -Headers $headers
+$saved.content
+```
+
+Generation follows rental API -> agreement processor -> fleet fetch -> external
+renderer -> fleet invoice save. Retrieval follows rental API -> fleet. The
+processor receives only a JWT bound to this booking, never the general user JWT.
+The returned JSON has `booking_id` and `content`; both calls return the same
+stored text.
+
+To cancel the booking as its owner:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/bookings/$($booking.id)/cancel" -Headers $headers
+```
+
+Run the example against an available interval: repeating creation for the same
+vehicle/dates while a pending booking exists returns 409.
 
 The token's subject establishes ownership; neither ownership nor initial status
 is accepted in a booking request. New bookings default to `pending`. Rental
@@ -141,9 +170,8 @@ The rental API mirrors the fleet vehicle/booking/cancellation routes. Staff
 authenticate as Carol to manage the fleet and see/cancel any booking.
 `POST /bookings/{id}/agreement` delegates a scoped JWT to the processor, while
 `GET /bookings/{id}/agreement` retrieves an existing invoice through fleet.
-The processor route is implemented; coordinated three-service verification is
-the next checkpoint. The API propagates downstream errors rather than
-pretending an agreement exists.
+All three services participate in the verified generation flow. The API
+propagates downstream errors rather than pretending an agreement exists.
 Unreachable downstream services return 502; timeouts return 504. Fleet status
 codes and authorization errors are preserved.
 

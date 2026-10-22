@@ -69,5 +69,7 @@ token with insufficient authority returns 403. OpenAPI/docs expose no domain dat
   during rendering returns 409 rather than saving an invoice for a cancelled
   booking. No failed upstream/rendering operation is reported as success.
 
-This matrix documents implemented Step 2-4 decisions. The complete three-service
-checkpoint and Step 6 formal functional/authorization suites remain pending.
+This matrix documents implemented Step 2-5 decisions. The complete flow has been
+verified with three independent HTTP service processes, including cross-renter
+denials and staff-scoped generation. Step 6 formal functional/authorization
+suites remain pending; no CI run is claimed here.
