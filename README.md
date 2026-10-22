@@ -3,7 +3,7 @@
 Secure-SDLC course project with three FastAPI services, each running in its own
 process. Only the fleet resource service owns the SQLite database.
 
-## Current checkpoint: Step 5
+## Current checkpoint: Step 6
 
 Implemented: fleet SQLite schema, five-vehicle seed support, independently
 verified JWTs, role/ownership/scoped authorization, fleet management, dated
@@ -18,8 +18,9 @@ The agreement processor now verifies scoped JWTs, fetches one booking over HTTP,
 renders through the installed external package, and saves the invoice through
 fleet. The complete login, booking, generation and retrieval flow has been
 verified with three independent Uvicorn processes and a fresh seeded SQLite
-database, including cross-renter denials and staff operations. Formal test
-suites and CI remain later checkpoints.
+database, including cross-renter denials and staff operations. Formal functional
+and authorization pytest suites now cover the required behavior. CI remains a
+later checkpoint.
 
 The [lifecycle plan](docs/lifecycle-plan.md) was committed separately before
 feature code in commit `466fca9`.
@@ -195,13 +196,28 @@ saving. Cancellation before write-back returns fleet's 409.
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m bandit -r app
+.\.venv\Scripts\python.exe -m pytest -q tests\test_functional.py tests\test_authz.py
 ```
 
-Functional and authorization suites, with exact pytest and seed commands, arrive
-in Step 6; the fleet-only seed command is available above. No formal test files
-exist at this checkpoint. Security-demonstration tests wait for separately
-supplied requirements in Step 7. CI and its saved artifacts arrive in Step 8;
-no CI success is claimed here.
+The suites create a fresh temporary SQLite database, seed it through the fleet
+module, generate private test credentials, and run three real service processes
+on temporary loopback ports. No manually running services or environment setup
+are needed for tests. Each test uses its own vehicle/booking records; cleanup
+stops only the processes started by the fixture. Existing runtime data is not
+touched.
+
+The fleet module command above is the idempotent seed script; no duplicate
+wrapper is needed. The rental API creates the three fixed demo accounts from
+its configured environment passwords at startup.
+
+The [authorization suite](tests/test_authz.py) includes one named evidence test
+for each principle: `test_least_privilege`, `test_complete_mediation`, and
+`test_fail_safe_defaults`. The [functional suite](tests/test_functional.py)
+covers seeding, the complete agreement workflow, staff fleet/booking operations,
+price snapshots, date availability and concurrent overlap rejection.
+
+Security-demonstration tests wait for separately supplied requirements in
+Step 7. CI and its saved artifacts arrive in Step 8; no CI success is claimed.
 
 ## Build checkpoints
 

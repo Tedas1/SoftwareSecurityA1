@@ -69,7 +69,15 @@ token with insufficient authority returns 403. OpenAPI/docs expose no domain dat
   during rendering returns 409 rather than saving an invoice for a cancelled
   booking. No failed upstream/rendering operation is reported as success.
 
-This matrix documents implemented Step 2-5 decisions. The complete flow has been
+## Principle evidence
+
+| Principle | Decision and code | One evidence test |
+| --- | --- | --- |
+| Least privilege | One-booking processor tokens; [`agreement_only` and `user_only`](../app/auth.py) restrict operation classes, with the [processor](../app/agreement_processor/main.py) enforcing the bound ID | [`test_least_privilege`](../tests/test_authz.py), including a staff-initiated scoped token denied bulk access |
+| Complete mediation | [Fleet](../app/fleet_resource_service/main.py) checks scope and ownership through `accessible_booking`; [JWT verification](../app/auth.py) applies independently to each request | [`test_complete_mediation`](../tests/test_authz.py), rejecting direct and processor-style cross-owner calls |
+| Fail-safe defaults | [Authentication](../app/auth.py) rejects missing/bad tokens; the [schema](../app/fleet_resource_service/db.py) defaults new bookings to `pending` | [`test_fail_safe_defaults`](../tests/test_authz.py), checking all three services and the default status |
+
+This matrix documents implemented Step 2-6 decisions. The complete flow has been
 verified with three independent HTTP service processes, including cross-renter
-denials and staff-scoped generation. Step 6 formal functional/authorization
-suites remain pending; no CI run is claimed here.
+denials and staff-scoped generation. The formal functional/authorization suites
+are implemented; no CI run is claimed here.
