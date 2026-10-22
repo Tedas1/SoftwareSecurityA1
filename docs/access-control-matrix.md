@@ -77,7 +77,8 @@ token with insufficient authority returns 403. OpenAPI/docs expose no domain dat
 | Complete mediation | [Fleet](../app/fleet_resource_service/main.py) checks scope and ownership through `accessible_booking`; [JWT verification](../app/auth.py) applies independently to each request | [`test_complete_mediation`](../tests/test_authz.py), rejecting direct and processor-style cross-owner calls |
 | Fail-safe defaults | [Authentication](../app/auth.py) rejects missing/bad tokens; the [schema](../app/fleet_resource_service/db.py) defaults new bookings to `pending` | [`test_fail_safe_defaults`](../tests/test_authz.py), checking all three services and the default status |
 
-This matrix documents implemented Step 2-6 decisions. The complete flow has been
+This matrix documents the implemented authorization decisions. The complete flow has been
 verified with three independent HTTP service processes, including cross-renter
 denials and staff-scoped generation. The formal functional/authorization suites
-are implemented; no CI run is claimed here.
+are implemented. Actual CI results and artifacts are recorded by the
+[workflow](../.github/workflows/ci.yml), not inferred from this document.

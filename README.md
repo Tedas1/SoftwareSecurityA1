@@ -3,7 +3,7 @@
 Secure-SDLC course project with three FastAPI services, each running in its own
 process. Only the fleet resource service owns the SQLite database.
 
-## Current checkpoint: Step 6
+## Current checkpoint: Steps 1-6 complete; documentation and CI from Step 8
 
 Implemented: fleet SQLite schema, five-vehicle seed support, independently
 verified JWTs, role/ownership/scoped authorization, fleet management, dated
@@ -19,8 +19,8 @@ renders through the installed external package, and saves the invoice through
 fleet. The complete login, booking, generation and retrieval flow has been
 verified with three independent Uvicorn processes and a fresh seeded SQLite
 database, including cross-renter denials and staff operations. Formal functional
-and authorization pytest suites now cover the required behavior. CI remains a
-later checkpoint.
+and authorization pytest suites cover the required behavior. Step 7 is deferred
+until its PoC requirements are supplied; the final report remains last.
 
 The [lifecycle plan](docs/lifecycle-plan.md) was committed separately before
 feature code in commit `466fca9`.
@@ -31,11 +31,15 @@ Requires Python 3.12 or newer.
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e . -e .\external\rental_invoice_render
+.\.venv\Scripts\python.exe -m pip install --no-deps -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation --check-build-dependencies -e . -e .\external\rental_invoice_render
+.\.venv\Scripts\python.exe -m pip check
 ```
 
-The root project installs all three services and the dependencies listed in
-[requirements.txt](requirements.txt), including the course's test and CI tools.
+The pinned [requirements](requirements.txt) include direct/transitive packages
+and build/CI tools. `--no-deps` prevents silently installing unlisted packages;
+build-requirement checks and `pip check` reject missing/incompatible inputs.
+The root project installs all three services.
 The renderer has its own [project metadata](external/rental_invoice_render/pyproject.toml)
 and is installed editable, not copied into a service.
 
@@ -196,6 +200,7 @@ saving. Cancellation before write-back returns fleet's 409.
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m bandit -r app
+.\.venv\Scripts\python.exe -m pip_audit --progress-spinner off
 .\.venv\Scripts\python.exe -m pytest -q tests\test_functional.py tests\test_authz.py
 ```
 
@@ -217,7 +222,42 @@ covers seeding, the complete agreement workflow, staff fleet/booking operations,
 price snapshots, date availability and concurrent overlap rejection.
 
 Security-demonstration tests wait for separately supplied requirements in
-Step 7. CI and its saved artifacts arrive in Step 8; no CI success is claimed.
+Step 7 and are not part of the initial CI gate.
+
+## CI and actual evidence
+
+The [workflow](.github/workflows/ci.yml) runs on push and pull requests using
+read-only repository permissions and pinned official actions. Each job installs
+the approved inputs in a clean virtual environment.
+
+- Build: editable services/renderer, `pip check`, Ruff, Bandit over `app/`, and
+  pip-audit. Findings are not globally suppressed. Native pip-audit blocks all
+  known findings, including high/critical; custom severity filtering is deferred.
+- Test: the two functional/authorization suites against fresh temporary SQLite.
+  `pipefail` preserves pytest's failure status while saving its console output.
+- Actual `actions/upload-artifact` outputs: `build-reports` contains
+  `bandit.json` and `pip-audit.json`; `pytest-results` contains `pytest.xml` and
+  `pytest.txt`. Uploads run even when checks fail.
+
+Use [Actions](https://github.com/Tedas1/SoftwareSecurityA1/actions/workflows/ci.yml)
+to inspect the run's commit, result and downloadable artifacts. A workflow
+definition or local scan is not proof of a successful Actions run. Artifact
+contents must come from actual uploads, never hand-written replacements.
+
+Version pins are not wheel hash/provenance verification. TLS, independent
+signing authority, password lifecycle, abuse controls, durable audit logging,
+database/invoice retention and recovery remain production-readiness gaps.
+
+## Design documentation and remaining submission work
+
+- [Lifecycle plan](docs/lifecycle-plan.md), originally committed before features.
+- [Access-control matrix and principle evidence](docs/access-control-matrix.md).
+- [STRIDE analysis](docs/stride-analysis.md).
+- [Threat model, asset register and trust boundaries](docs/threat-model.md).
+
+Step 7 remains pending owner requirements. Write the 2,000-2,500-word report only
+after that implementation and real CI verification, citing actual commits,
+tests and logs. The project owner drafts the AI-use declaration.
 
 ## Build checkpoints
 

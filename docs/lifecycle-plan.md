@@ -1,72 +1,84 @@
 # Secure development lifecycle plan
 
-This plan is committed before feature implementation. Evidence named below is
-planned, not a claim that tests, controls, or CI runs already exist. Update the
-evidence links as each build step is completed; retain the original Git history.
+The initial plan was committed as `466fca9` before feature code. This later
+revision records the four course phases and implemented decisions; it does not
+replace or backdate the original. Steps 1-6 were committed incrementally, ending
+with formal tests in `b4dbb37`.
 
-## Scope and decisions
+## Requirements baseline
 
-- Three separately running HTTP services: rental API, fleet resource service,
-  and agreement processor. Only the fleet service owns the SQLite database.
-- The rental API authenticates users. Each downstream service verifies signed,
-  short-lived JWTs through FastAPI dependencies and enforces its own authority
-  checks. Request-body user identifiers never establish authority.
-- Renters access only their bookings; staff manage the fleet and all bookings.
-- Least privilege: processing uses booking-scoped authority, not a general
-  bulk-booking credential. The processor must not be able to list all bookings,
-  including when a staff user initiated a request.
-- Complete mediation: fleet authorization applies to every request, including
-  direct requests and calls from the processor.
-- Fail-safe defaults: missing or invalid credentials deny access; newly created
-  bookings start as `pending`, regardless of caller-supplied status.
-- The invoice renderer is a separately packaged, editable dependency. The
-  processor chooses server-controlled output paths; callers cannot select paths.
+- Operations: authenticate; renters create, view and cancel their own bookings,
+  generate agreements and retrieve them; staff list all bookings, manage the
+  fleet and override-cancel any booking.
+- Seed identities: alice and bob are renters; carol is staff; approximately five
+  vehicles. The processor receives booking-scoped authority, not a staff role.
+- Asset register: credentials and JWT signing key; identity and authorization
+  claims; fleet records; bookings and ownership/status; invoices and output
+  files; source, dependencies, build artefacts and CI evidence.
+- Components and trust boundaries: client to rental API; rental API to fleet
+  resource service or agreement processor; processor to fleet resource service;
+  fleet service to its SQLite database; processor to the separately installed
+  renderer and output filesystem. Only the fleet service owns the database.
+- Design records: [access-control matrix](access-control-matrix.md),
+  [STRIDE analysis](stride-analysis.md), and
+  [asset register/trust boundaries](threat-model.md).
 
-## Four phases and release gates
+## Authorization and implementation decisions
 
-| Phase / lifecycle activity | Asset | Threat | Control / decision | Planned test or evidence | Gate |
+- Identity comes from verified JWTs, never body user IDs; the key is an
+  environment secret. Each service verifies JWTs independently.
+- Least privilege: the processor gets one booking-scoped token, never bulk
+  authority, even for a staff-initiated request.
+- Complete mediation: fleet checks scope and ownership on every call.
+- Fail-safe defaults: missing/bad tokens deny; the database defaults new bookings
+  to `pending`, and callers cannot choose status.
+- The editable renderer writes a server-selected temporary file; fleet stores
+  the invoice text. See the matrix for code and one test per principle.
+
+## Four phases: required deliverables and gates
+
+| Phase | Required deliverables | Gate decision |
+| --- | --- | --- |
+| 1. Requirements | Scope/operations, asset register, component/trust boundaries, access-control matrix and STRIDE analysis | Review that the architecture meets scope, authorities are defined and relevant threats have controls. |
+| 2. Implementation and build | Three components, separate editable renderer, pinned dependency/build inputs and exact clean-install commands | Reject unexpected/unapproved artefacts and unlisted dependencies; require lint and scanner gates. |
+| 3. Testing | Functional/authorization suites; investigation, fixes and reruns; later PoCs only when specified | Required functional/security tests pass; malformed artefacts are rejected. The initial security gate is authorization only. |
+| 4. Release, deploy and operation | Report discussion of production release and operational needs, using real implementation/evidence | No course deployment gate; document gaps rather than claim production readiness. |
+
+## Asset-to-gate traceability
+
+Use the previous threat-modelling and DevSecOps exercise's chain:
+asset -> threat -> requirement/control -> lifecycle activity -> test/evidence ->
+gate decision.
+
+| Asset | Threat | Requirement/control | Lifecycle activity | Test/evidence | Gate decision |
 | --- | --- | --- | --- | --- | --- |
-| 1. Requirements and planning: define ownership and role rules | Booking and invoice confidentiality | A renter reads another renter's records | Own-booking access for renters; explicit staff exceptions | Access-control matrix; alice/bob/carol functional and authorization cases | Approve role rules before implementing fleet routes |
-| 1. Requirements and planning: record safe defaults | Booking integrity | Unauthenticated or prematurely approved bookings | Deny missing/bad tokens; server assigns `pending` | Fail-safe-defaults authorization test | Required test passes before release |
-| 2. Design: map HTTP and package trust boundaries | Identity and authorization context | Forged identity or confused-deputy access | Every service verifies JWTs; no body identity authority | Threat model, STRIDE analysis, direct fleet-call authorization test | Review boundaries before wiring the full flow |
-| 2. Design: constrain processor authority | All bookings | Processor uses a broad caller token to enumerate records | Booking-scoped processing authority; no bulk access | Least-privilege test rejecting processor bulk access | Scoped access works and bulk access is denied |
-| 2. Design: mediate resource operations | Booking ownership and status | Trusted-service bypass of ownership checks | Fleet rechecks caller authority on every operation | Complete-mediation test rejecting a cross-owner downstream call | Required authorization suite passes |
-| 3. Implementation: package and review dependencies | Application and invoice output | Dependency substitution or known vulnerable packages | Separate renderer project; explicit editable installation; dependency audit | Install logs, lint results, saved Bandit and pip-audit outputs | Lint passes; no high/critical audited dependency finding |
-| 3. Implementation: protect database and credentials | SQLite records and JWT signing key | SQL injection, leaked keys, or unsafe file writes | Parameterized SQL; environment-supplied key; server-selected invoice paths; exclude runtime files from Git | Code review and Bandit output; configuration and authorization checks in the planned suites | No embedded key; assess findings without global suppression |
-| 4. Verification and release: exercise user workflows | Booking and invoice availability/integrity | Broken booking, cancellation, or three-service agreement flow | Fresh test database; functional and authorization suites | Saved pytest results, including three-service flow and three principle tests | Any functional or authorization failure blocks release |
-| 4. Verification and release: preserve reproducible evidence | Submission and release evidence | Fabricated logs or untraceable decisions | Incremental commits; actual CI artifact uploads; report written last | Commit IDs, real Actions run URL, uploaded pytest/Bandit/pip-audit artifacts | No claim of CI success without an actual successful run |
+| Identity, bookings and invoices | Forged identity, cross-renter access or processor enumeration | Verified JWTs, own-record rules, one-booking scope | Requirements: review authorities; implementation/testing: enforce and exercise them | Matrix and `test_least_privilege` / `test_complete_mediation` | Defined authorities; required authorization tests pass. |
+| Booking integrity | Unsafe defaults, overlap or price tampering | Deny invalid credentials; `pending`; atomic overlap check; price snapshot | Implementation/testing: validate state and investigate failures | `test_fail_safe_defaults`; functional price/concurrency tests | Reject unsafe requests; required tests pass. |
+| Booking/invoice artefacts | Malformed input or rendered output is persisted | Pydantic validation, bounded UTF-8 output, server-selected path | Implementation/testing: validate before writes | Processor code; functional validation cases and saved pytest output | Reject malformed artefacts; no failed operation reports success. |
+| Packages and build outputs | Unexpected dependencies or known vulnerabilities | Pinned manifest; clean install without automatic dependency additions; build/dependency checks | Implementation and build: install, lint, Bandit and pip-audit | Install logs; actual uploaded Bandit/pip-audit reports | Reject unlisted/missing requirements; lint and native scanner exits must pass. |
+| Release evidence and operational data | Fabricated claims, unsafe deployment or data loss | Preserve history and real CI uploads; discuss remaining controls | Release, deploy and operation: assess readiness and write report last | Real commits/tests/Actions artifacts; eventual report | No fabricated evidence or production-readiness claim. |
 
 ## Build sequence and checkpoints
 
-0. Commit this plan separately before feature code.
-1. Skeleton and external package.
-2. Fleet schema, seed support, and authorization dependencies.
-3. Rental authentication, JWT issuance, and HTTP routing.
-4. Agreement processor using HTTP and the installed renderer.
-5. Complete three-service flow.
-6. Seed script and functional/authorization tests, including one evidence test
-   for each of the three principles.
-7. Security-demonstration tests only after their requirements are supplied.
-8. Final documentation, real CI verification, and then the submission report.
-
-Confirm with the project owner between major steps and commit incrementally.
-The initial CI test gate includes only functional and authorization suites.
-Do not invent security-demonstration tests or make them part of that gate yet.
+Steps 1-6 are implemented and tested. The owner deferred Step 7 until the PoC
+requirements are supplied and approved doing documentation/CI from Step 8 now.
+Keep incremental history and confirm major changes. Do not invent PoCs or add
+them to the initial CI gate. The 2,000-2,500-word report remains last, after the
+remaining implementation and real CI evidence. The owner writes the AI-use
+declaration.
 
 ## Verification policy and evidence handling
 
-- Build job: install the application services and editable external package;
-  run Ruff, Bandit over `app/`, and pip-audit. Retain scanner output even on
-  failure. Do not globally suppress findings.
-- Dependency gate: fail for high/critical pip-audit findings. Select and document
-  a reliable severity source during CI implementation; unknown severity must
-  not silently be treated as low risk.
-- Test job: use a fresh SQLite database and run functional/authorization tests.
-  Upload actual pytest, Bandit, and pip-audit output through Actions artifacts.
-- Keep logs free of passwords, bearer tokens, and signing keys.
-- Report 2,000–2,500 words, excluding the specified ancillary material, only
-  after implementation; cite real commits, tests, and logs.
-- The project owner writes the university AI-use declaration.
+- [Requirements](../requirements.txt) pin direct, transitive and build tools.
+  Fresh environments use `--no-deps`, check build requirements and run `pip check`;
+  missing/unlisted dependencies are not silently downloaded.
+- [CI](../.github/workflows/ci.yml) runs on push/PR. Build runs Ruff, Bandit over
+  `app/` and pip-audit; test runs only the two fresh-DB functional/authz suites.
+- Scanner failures are not suppressed. Native pip-audit currently blocks every
+  known finding, including high/critical; custom severity filtering is deferred.
+- `actions/upload-artifact` saves actual scanner and pytest output, even on
+  failure. A workflow definition or local output is not proof of a real CI run.
+- Keep passwords, bearer tokens and signing keys out of logs and artifacts.
 
 ## Release limitations and maintenance handoff
 
