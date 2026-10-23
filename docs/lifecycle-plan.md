@@ -1,90 +1,86 @@
 # Secure development lifecycle plan
 
-The initial plan was committed as `466fca9` before feature code. This later
-revision records the four course phases and implemented decisions; it does not
-replace or backdate the original. Steps 1-6 were committed incrementally, ending
-with formal tests in `b4dbb37`.
+The initial plan was committed as `466fca9` before feature code, with formal tests
+added in `b4dbb37`. This revision describes the current implementation, including
+the four intentional vulnerabilities documented in the [README](../README.md).
 
-## Requirements baseline
+## Scope and requirements
 
-- Operations: authenticate; renters create, view and cancel their own bookings,
-  generate agreements and retrieve them; staff list all bookings, manage the
-  fleet and override-cancel any booking.
-- Seed identities: alice and bob are renters; carol is staff; approximately five
-  vehicles. The processor receives booking-scoped authority, not a staff role.
-- Asset register: credentials and JWT signing key; identity and authorization
-  claims; fleet records; bookings and ownership/status; invoices and output
-  files; source, dependencies, build artefacts and CI evidence.
-- Components and trust boundaries: client to rental API; rental API to fleet
-  resource service or agreement processor; processor to fleet resource service;
-  fleet service to its SQLite database; processor to the separately installed
-  renderer and output filesystem. Only the fleet service owns the database.
-- Design records: [access-control matrix](access-control-matrix.md),
-  [STRIDE analysis](stride-analysis.md), and
-  [asset register/trust boundaries](threat-model.md).
+- Renters should create, view and cancel their own bookings, then generate and
+  retrieve their agreements. Staff should manage vehicles and view or cancel any
+  booking. These are the intended permissions; the exceptions are listed below.
+- Alice and Bob are demo renters; Carol is staff. Passwords come from the
+  environment, and the seed command adds five vehicles.
+- Three HTTP services run in separate processes. Only fleet opens SQLite. The
+  processor calls fleet and uses a separately installed invoice renderer.
+- The [threat model](threat-model.md) records assets and trust boundaries;
+  the [access-control matrix](access-control-matrix.md) records permissions;
+  [STRIDE](stride-analysis.md) records threats, affected assets, impacts,
+  controls and gaps.
 
-## Authorization and implementation decisions
+## Implemented controls and known flaws
 
-- Identity comes from verified JWTs, never body user IDs; the key is an
-  environment secret. Each service verifies JWTs independently.
-- Least privilege: the processor gets one booking-scoped token, never bulk
-  authority, even for a staff-initiated request.
-- Complete mediation: fleet checks scope and ownership on every call.
-- Fail-safe defaults: missing/bad tokens deny; the database defaults new bookings
-  to `pending`, and callers cannot choose status.
-- The editable renderer writes a server-selected temporary file; fleet stores
-  the invoice text. See the matrix for code and one test per principle.
+- Each service verifies JWTs independently using a shared environment key.
+  User tokens last at most 15 minutes; booking ownership comes from the token.
+- Agreement tokens are bound to one booking and cannot use bulk or user routes.
+  However, the API delegates `sub="rental-api"`, `role="staff"` regardless of the
+  caller's role. This lets renters generate another renter's invoice (CWE-441).
+- Normal booking reads, invoice retrieval and cancellation check owner/staff
+  access. Override cancellation omits role and ownership checks (CWE-862).
+- New bookings default to `pending`. Fleet stores prices in integer cents and
+  serializes the overlap check and insert.
+- Vehicle names are length-checked but accept whitespace-only input (CWE-20).
+  Vehicle search interpolates SQL instead of using parameters (CWE-89).
+- The renderer writes to a server-selected temporary path. The processor checks
+  the output and removes the temporary file, then saves invoice text through fleet.
 
-## Four phases: required deliverables and gates
+## Lifecycle phases
 
-| Phase | Required deliverables | Gate decision |
+| Phase | Work and evidence | Acceptance criteria |
 | --- | --- | --- |
-| 1. Requirements | Scope/operations, asset register, component/trust boundaries, access-control matrix and STRIDE analysis | Review that the architecture meets scope, authorities are defined and relevant threats have controls. |
-| 2. Implementation and build | Three components, separate editable renderer, pinned dependency/build inputs and exact clean-install commands | Reject unexpected/unapproved artefacts and unlisted dependencies; require lint and scanner gates. |
-| 3. Testing | Functional/authorization suites; investigation, fixes and reruns; later PoCs only when specified | Required functional/security tests pass; malformed artefacts are rejected. The initial security gate is authorization only. |
-| 4. Release, deploy and operation | Report discussion of production release and operational needs, using real implementation/evidence | No course deployment gate; document gaps rather than claim production readiness. |
+| 1. Requirements | Define operations, assets, permissions and trust boundaries in the linked security docs. | Intended permissions and known exceptions are explicit; threats identify controls and gaps. |
+| 2. Implementation and build | Build the three services and separate renderer; pin dependencies; provide clean-install commands and CI checks. | Installation checks and Ruff pass. Bandit and pip-audit findings fail the build without suppression. The intentional SQL injection is expected to fail Bandit. |
+| 3. Testing | Run functional and authorization suites against a temporary database; reproduce the four flaws using the README steps. | Tests cover normal behavior and demonstrate the intentional flaws. Passing tests do not mean the application is secure. |
+| 4. Release and operation | Use actual test and scan results in the course report; document deployment and maintenance gaps. | Do not treat the demo as production-ready or a workflow definition as evidence of a successful CI run. |
 
-## Asset-to-gate traceability
+## Assets, controls and evidence
 
-Use the previous threat-modelling and DevSecOps exercise's chain:
-asset -> threat -> requirement/control -> lifecycle activity -> test/evidence ->
-gate decision.
+Review these links when requirements or implementation change. The
+[matrix](access-control-matrix.md) maps the three secure design principles to
+code and tests; those tests cover specific controls, not every route.
 
-| Asset | Threat | Requirement/control | Lifecycle activity | Test/evidence | Gate decision |
-| --- | --- | --- | --- | --- | --- |
-| Identity, bookings and invoices | Forged identity, cross-renter access or processor enumeration | Verified JWTs, own-record rules, one-booking scope | Requirements: review authorities; implementation/testing: enforce and exercise them | Matrix and `test_least_privilege` / `test_complete_mediation` | Defined authorities; required authorization tests pass. |
-| Booking integrity | Unsafe defaults, overlap or price tampering | Deny invalid credentials; `pending`; atomic overlap check; price snapshot | Implementation/testing: validate state and investigate failures | `test_fail_safe_defaults`; functional price/concurrency tests | Reject unsafe requests; required tests pass. |
-| Booking/invoice artefacts | Malformed input or rendered output is persisted | Pydantic validation, bounded UTF-8 output, server-selected path | Implementation/testing: validate before writes | Processor code; functional validation cases and saved pytest output | Reject malformed artefacts; no failed operation reports success. |
-| Packages and build outputs | Unexpected dependencies or known vulnerabilities | Pinned manifest; clean install without automatic dependency additions; build/dependency checks | Implementation and build: install, lint, Bandit and pip-audit | Install logs; actual uploaded Bandit/pip-audit reports | Reject unlisted/missing requirements; lint and native scanner exits must pass. |
-| Release evidence and operational data | Fabricated claims, unsafe deployment or data loss | Preserve history and real CI uploads; discuss remaining controls | Release, deploy and operation: assess readiness and write report last | Real commits/tests/Actions artifacts; eventual report | No fabricated evidence or production-readiness claim. |
+| Asset | Control or known gap | Evidence |
+| --- | --- | --- |
+| Credentials and JWTs | Verified claims, server-defined login roles, booking scope; shared signing authority remains a risk | `test_login_roles_and_rejection`, `test_least_privilege`, `test_fail_safe_defaults` in [authorization tests](../tests/test_authz.py) |
+| Booking ownership and invoices | Normal owner/staff checks; agreement delegation and override cancellation intentionally bypass intended permissions | `test_complete_mediation`, `test_agreement_confused_deputy_composition_demo`, `test_override_cancel_missing_authorization_demo` in [authorization tests](../tests/test_authz.py) |
+| Fleet and booking data | Fixed prices and atomic overlap checks; whitespace-only names and SQL injection remain | `test_booking_price_and_availability`, `test_concurrent_overlap_rejection`, and input-validation/search demos in [functional tests](../tests/test_functional.py) |
+| Invoice files | Server-selected path, bounded output and fleet write-back | [Processor implementation](../app/agreement_processor/main.py) and `test_renter_booking_and_agreement_flow` in [functional tests](../tests/test_functional.py) |
+| Source and dependencies | Pinned inputs, installation checks, lint and unsuppressed scans | [Requirements](../requirements.txt), [CI workflow](../.github/workflows/ci.yml), and reports from actual runs |
 
-## Build sequence and checkpoints
+## Verification and evidence
 
-Steps 1-6 are implemented and tested. The owner deferred Step 7 until the PoC
-requirements are supplied and approved doing documentation/CI from Step 8 now.
-Keep incremental history and confirm major changes. Do not invent PoCs or add
-them to the initial CI gate. The 2,000-2,500-word report remains last, after the
-remaining implementation and real CI evidence. The owner writes the AI-use
-declaration.
-
-## Verification policy and evidence handling
-
-- [Requirements](../requirements.txt) pin direct, transitive and build tools.
-  Fresh environments use `--no-deps`, check build requirements and run `pip check`;
-  missing/unlisted dependencies are not silently downloaded.
-- [CI](../.github/workflows/ci.yml) runs on push/PR. Build runs Ruff, Bandit over
-  `app/` and pip-audit; test runs only the two fresh-DB functional/authz suites.
-- Scanner failures are not suppressed. Native pip-audit currently blocks every
-  known finding, including high/critical; custom severity filtering is deferred.
-- `actions/upload-artifact` saves actual scanner and pytest output, even on
-  failure. A workflow definition or local output is not proof of a real CI run.
+- Follow the [README](../README.md) for installation, local checks and manual
+  vulnerability demonstrations. The pinned requirements include dependencies
+  and build tools. Installation uses `--no-deps`, checks build requirements and
+  runs `pip check`.
+- CI runs on pushes and pull requests. The build job runs installation checks,
+  Ruff, Bandit over `app/`, and pip-audit. pip-audit blocks all known findings;
+  there is no severity filter or finding suppression.
+- The independent test job runs the functional and authorization suites with a
+  temporary SQLite database and generated credentials. Existing runtime data
+  is untouched. Flaw demonstrations are included in these suites.
+- `build-reports` contains `bandit.json` and `pip-audit.json`; `pytest-results`
+  contains `pytest.xml` and `pytest.txt`. Uploads are attempted even after failed
+  checks. Use actual Actions results and artifacts when reporting outcomes.
 - Keep passwords, bearer tokens and signing keys out of logs and artifacts.
 
-## Release limitations and maintenance handoff
+## Report and maintenance
 
-Before production use, assess TLS, key rotation and service-specific signing
-authority, password lifecycle and abuse controls, audit logging, invoice access
-and retention, SQLite concurrency/backups, and dependency update ownership.
-These are readiness gaps to document, not permission to add extra project
-features. Re-run gates after changes and revise the threat model when roles,
-routes, dependencies, or trust boundaries change.
+Production use would require fixing the four intentional flaws and addressing
+TLS, key rotation/revocation, service-specific signing authority, password
+management, rate limits, audit logs, invoice retention, SQLite backups/recovery,
+renderer isolation and dependency provenance checks.
+
+Assign owners for dependency updates and operational controls before deployment.
+Re-run checks after changes, and update the security docs when roles, routes,
+dependencies or trust boundaries change.
