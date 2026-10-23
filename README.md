@@ -294,7 +294,7 @@ for run results and artifacts.
 
 ## Documentation
 
-- [Lifecycle plan](docs/lifecycle-plan.md).
-- [Access-control matrix](docs/access-control-matrix.md).
-- [STRIDE analysis](docs/stride-analysis.md).
-- [Threat model, asset register and trust boundaries](docs/threat-model.md).
+- [Lifecycle plan](docs/lifecycle-plan.md)
+- [Access-control matrix](docs/access-control-matrix.md)
+- [STRIDE analysis](docs/stride-analysis.md)
+- [Threat model, asset register and trust boundaries](docs/threat-model.md)
