@@ -166,7 +166,7 @@ foreach ($user in "alice", "bob", "carol") {
 
 Tokens last 15 minutes. Repeat login if a request returns 401.
 
-### 1. Vehicle validation (CWE-20)
+### 1. Improper Input Validation (CWE-20)
 
 As Carol, create a vehicle whose name is three spaces, then read it from fleet:
 
@@ -177,12 +177,7 @@ $vehicles = Invoke-RestMethod -Uri "$fleet/vehicles" -Headers $auth.carol
 $vehicles | Where-Object id -eq $invalidVehicle.id | ConvertTo-Json
 ```
 
-Expected: creation succeeds (201), and the saved vehicle has `"name": "   "`.
-Names pass the 1-100 character length check without trimming. An empty string
-still returns 422; renters still cannot create vehicles.
-
-`PUT /vehicles/{id}` is removed from both services. Creation, listing, search,
-deletion, and invoice-saving PUT remain.
+Expected: creation succeeds (201), and the saved vehicle has `"name": "   "`. This is not the most dangerous situation, but still an improper input validation.
 
 ### 2. SQL injection (CWE-89)
 
@@ -203,7 +198,7 @@ every vehicle, matching the last count. Fleet inserts the search text into SQL
 with an f-string instead of a parameterized query. This payload only reads data.
 To check fleet directly, repeat with `$fleet` instead of `$api`.
 
-Bandit reports this as `B608`; the finding is not suppressed and is expected to
+Bandit reports this as `B608` in the failed CI artifacts build_reports zip file; the finding is not suppressed and is expected to
 fail the security gate.
 
 ### 3. Confused deputy (CWE-441)
@@ -303,7 +298,3 @@ for run results and artifacts.
 - [Access-control matrix](docs/access-control-matrix.md).
 - [STRIDE analysis](docs/stride-analysis.md).
 - [Threat model, asset register and trust boundaries](docs/threat-model.md).
-
-Remaining: Step 7 requirements, CI verification, and the 2,000-2,500-word report
-with commit, test, and log references. The project owner writes the AI-use
-declaration.
