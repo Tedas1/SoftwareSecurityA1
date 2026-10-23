@@ -294,6 +294,7 @@ for run results and artifacts.
 
 ## Documentation
 
+- [Report](docs/report.md)
 - [Lifecycle plan](docs/lifecycle-plan.md)
 - [Access-control matrix](docs/access-control-matrix.md)
 - [STRIDE analysis](docs/stride-analysis.md)
